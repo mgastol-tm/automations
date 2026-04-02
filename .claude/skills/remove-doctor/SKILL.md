@@ -1,11 +1,11 @@
 ---
 name: remove-doctor
-description: Batch process emails from b.goslawska@telemedi.com about removing doctors - hide in Supabase, request Google Search Console removal, reply to Beata. Use when user says "remove doctor" or "process doctor removal".
+description: Batch process emails from b.goslawska@telemedi.com about removing doctors - hide in Supabase, refresh listing pages, request Google Search Console removal, reply to Beata. Use when user says "remove doctor" or "process doctor removal".
 ---
 
 # Remove Doctor Command
 
-Batch processes ALL unread emails from b.goslawska@telemedi.com from the last 3 days that contain `telemedi.com/pl/lekarze/` URLs. For each email: hides doctor in Supabase, submits Search Console removal, replies to Beata.
+Batch processes ALL unread emails from b.goslawska@telemedi.com from the last 7 days that contain `telemedi.com/pl/lekarze/` URLs. For each email: hides doctor in Supabase, refreshes listing pages (materialized view), submits Search Console removal, replies to Beata.
 
 ## Configuration
 
@@ -22,8 +22,8 @@ Batch processes ALL unread emails from b.goslawska@telemedi.com from the last 3 
 Run a single Bash script to fetch all unread emails from the last 3 days and extract doctor slugs:
 
 ```bash
-# List unread messages from Beata in last 3 days
-gws gmail users messages list --params '{"userId": "me", "q": "from:b.goslawska@telemedi.com is:unread newer_than:3d"}'
+# List unread messages from Beata in last 7 days
+gws gmail users messages list --params '{"userId": "me", "q": "from:b.goslawska@telemedi.com is:unread newer_than:7d"}'
 ```
 
 Then for EACH message ID, fetch and parse in one script:
@@ -69,11 +69,47 @@ doctor_slugs = [s for s in slugs if '/' not in s]
 # Deduplicate
 doctor_slugs = list(dict.fromkeys(doctor_slugs))
 
-print(json.dumps({'msg_id': msg_id, 'thread_id': thread_id, 'subject': subject, 'message_id_header': message_id_header, 'slugs': doctor_slugs}))
+
+# Extract source email info (the forwarded email from the person requesting removal)
+# Look for 'Od:' or 'From:' patterns in the body to find the original sender
+import html as html_mod
+sender_name = ''
+sender_email = ''
+inner_subject = ''
+body_excerpt = ''
+
+# Try to find 'Od:' sender line in text
+od_match = re.search(r'Od:\s*(.+?)\s*<([^>]+)>', text)
+if not od_match:
+    od_match = re.search(r'From:\s*(.+?)\s*<([^>]+)>', text)
+if od_match:
+    sender_name = od_match.group(1).strip()
+    sender_email = od_match.group(2).strip()
+
+# Try to find inner subject
+subj_match = re.search(r'Temat:\s*(?:\[EXT\]\s*)?(.+)', text)
+if not subj_match:
+    subj_match = re.search(r'Subject:\s*(?:\[EXT\]\s*)?(.+)', text)
+if subj_match:
+    inner_subject = subj_match.group(1).strip()
+
+# Extract a brief body excerpt (first meaningful line of the forwarded email body)
+# Look for text after the headers block
+body_lines = text.split('\n')
+capture = False
+for line in body_lines:
+    stripped = line.strip()
+    if capture and stripped and not stripped.startswith('[cid:') and not stripped.startswith('http'):
+        body_excerpt = stripped[:120]
+        break
+    if re.match(r'Temat:|Subject:', stripped):
+        capture = True
+
+print(json.dumps({'msg_id': msg_id, 'thread_id': thread_id, 'subject': subject, 'message_id_header': message_id_header, 'slugs': doctor_slugs, 'sender_name': sender_name, 'sender_email': sender_email, 'inner_subject': inner_subject, 'body_excerpt': body_excerpt}))
 "
 ```
 
-**IMPORTANT**: Run this for ALL message IDs in parallel to speed things up. Collect a list of `{msg_id, thread_id, subject, message_id_header, slugs[], doctor_names[]}` objects.
+**IMPORTANT**: Run this for ALL message IDs in parallel to speed things up. Collect a list of `{msg_id, thread_id, subject, message_id_header, slugs[], sender_name, sender_email, inner_subject, body_excerpt, doctor_names[]}` objects.
 
 ### Fallback: extract doctor names when no URL is found
 
@@ -120,6 +156,20 @@ curl -s -X PATCH "https://prheuenegkpayiskjysx.supabase.co/rest/v1/doctors?id=eq
 
 **IMPORTANT**: Always search by `slug=eq.SLUG` (exact match). Do NOT use `ilike` — it times out on this table.
 
+### Refresh listing pages
+
+After hiding all doctors, refresh the `doctor_search_view` materialized view so hidden doctors disappear from listing/category pages (e.g. `/pl/lekarze/lekarz-ogolny/ostaszewo`). The view filters by `is_hidden = false` but only updates on refresh.
+
+```bash
+curl -s -X POST "https://prheuenegkpayiskjysx.supabase.co/rest/v1/rpc/schedule_doctor_search_view_refresh" \
+  -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+This schedules a pg_cron job that refreshes the view in the background (avoids PostgREST timeout). The refresh takes ~8 minutes to complete. It auto-unschedules after running.
+
 ## Step 3: Request URL removals from Google Search Console (batch)
 
 1. Navigate to Search Console removals page ONCE:
@@ -143,8 +193,10 @@ curl -s -X PATCH "https://prheuenegkpayiskjysx.supabase.co/rest/v1/doctors?id=eq
 
 For EACH email that had valid slugs, send a reply. Pick a DIFFERENT random flower emoji for each reply from: 🌸 🌺 🌻 🌹 🌷 💐 🌼 🏵️
 
+Include a quoted excerpt of the source email so Beata knows which request it refers to:
+
 ```bash
-RAW=$(printf "To: b.goslawska@telemedi.com\r\nSubject: Re: ORIGINAL_SUBJECT\r\nIn-Reply-To: ORIGINAL_MESSAGE_ID_HEADER\r\nReferences: ORIGINAL_MESSAGE_ID_HEADER\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nUsunięta FLOWER_EMOJI" | base64 | tr '+/' '-_' | tr -d '\n' | tr -d '=')
+RAW=$(printf "To: b.goslawska@telemedi.com\r\nSubject: Re: ORIGINAL_SUBJECT\r\nIn-Reply-To: ORIGINAL_MESSAGE_ID_HEADER\r\nReferences: ORIGINAL_MESSAGE_ID_HEADER\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nUsunięta FLOWER_EMOJI\r\n\r\n> Od: SENDER_NAME <SENDER_EMAIL>\r\n> Temat: ORIGINAL_INNER_SUBJECT\r\n> Treść: BRIEF_BODY_EXCERPT" | base64 | tr '+/' '-_' | tr -d '\n' | tr -d '=')
 gws gmail users messages send --params '{"userId": "me"}' --json "{\"raw\": \"$RAW\", \"threadId\": \"THREAD_ID\"}"
 ```
 
@@ -162,6 +214,6 @@ Run this for ALL processed message IDs.
 
 Print a summary table:
 
-| Email Subject | Doctor Slug | DB Hidden | Search Console | Reply Sent | Archived |
-|---|---|---|---|---|---|
-| ... | ... | yes/already/not found | submitted | yes | yes |
+| Email Subject | Doctor Slug | DB Hidden | Listing Pages | Search Console | Reply Sent | Archived |
+|---|---|---|---|---|---|---|
+| ... | ... | yes/already/not found | scheduled | submitted | yes | yes |
