@@ -20,10 +20,12 @@ export const HEADER: readonly string[] = [
   "source",
   "flag_key",
   "host",
+  "email",
 ]
 
 export interface UserRequestRow {
   created_at?: string | null;
+  email?: string | null;
   request_type?: string | null;
   phone?: string | null;
   metadata?: Record<string, unknown> | null;
@@ -73,6 +75,9 @@ export const toSheetRow = (row: UserRequestRow): string[] => {
     // (prheuenegkpayiskjysx). This column is the only way to tell a staging
     // test lead from a real one. Filter the sheet on it.
     cell(meta.host),
+    // `email` is a top-level NOT NULL column on user_requests, not a
+    // metadata key. Appended last so historical rows keep their alignment.
+    cell(row.email),
   ]
 }
 

@@ -61,7 +61,7 @@ const fetchAllLeads = async (): Promise<UserRequestRow[]> => {
   const pageSize = 1000
   for (let offset = 0; ; offset += pageSize) {
     const url = `${base}/rest/v1/user_requests` +
-      `?select=created_at,request_type,phone,metadata` +
+      `?select=created_at,email,request_type,phone,metadata` +
       `&request_type=eq.${UNIQA_REQUEST_TYPE}` +
       // Skip the pre-B2C-457 one-step leads. See hasConfirmedPayload().
       `&metadata->>postal_code=not.is.null` +

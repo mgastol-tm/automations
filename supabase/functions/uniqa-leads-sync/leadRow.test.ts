@@ -8,6 +8,7 @@ import { HEADER, hasConfirmedPayload, isUniqaLead, rowsFromWebhook, toSheetRow }
 
 const lead = {
   created_at: "2026-10-20T09:27:00+02:00",
+  email: "patient@telemedi.com",
   request_type: "uniqa_insurance_lead",
   phone: "48501731688",
   metadata: {
@@ -36,6 +37,7 @@ test("the row matches the header, column for column", () => {
     "pd_home_popup",
     "pd.uniqa-insurance-offer",
     "panel.telemedi.com",
+    "patient@telemedi.com",
   ])
 })
 
@@ -48,7 +50,7 @@ test("every cell is a string, so Sheets cannot reinterpret a phone or a postal c
 test("a missing metadata block still produces a full-width row", () => {
   const row = toSheetRow({ created_at: "x", request_type: "uniqa_insurance_lead", phone: "1" })
   assert.equal(row.length, HEADER.length)
-  assert.deepEqual(row.slice(2), ["", "", "", "", "", "", "", ""])
+  assert.deepEqual(row.slice(2), ["", "", "", "", "", "", "", "", ""])
 })
 
 test("a null age renders empty, not the text 'null'", () => {
@@ -109,15 +111,18 @@ test("the header never carries a region column", () => {
   assert.equal(HEADER.includes("city"), true)
 })
 
-test("the header never carries an email column", () => {
-  assert.equal(HEADER.includes("email"), false)
+test("the header carries email, appended last", () => {
+  // Reinstated 2026-10-20: UNIQA keeps the email, and it is a NOT NULL column
+  // on user_requests, so no lead can exist without one.
+  assert.equal(HEADER.includes("email"), true)
+  assert.equal(HEADER[HEADER.length - 1], "email")
 })
 
 test("the header carries host, because staging and prod share one Supabase project", () => {
   assert.equal(HEADER.includes("host"), true)
   // Appended last on purpose: inserting a column anywhere else shifts every
   // historical row under the wrong header.
-  assert.equal(HEADER[HEADER.length - 1], "host")
+  assert.equal(HEADER[HEADER.length - 2], "host")
 })
 
 test("a pre-B2C-457 lead, written before the confirm step existed, is skipped", () => {
