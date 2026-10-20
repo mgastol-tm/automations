@@ -4,7 +4,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 
-import { HEADER, isUniqaLead, rowsFromWebhook, toSheetRow } from "./leadRow.ts"
+import { HEADER, hasConfirmedPayload, isUniqaLead, rowsFromWebhook, toSheetRow } from "./leadRow.ts"
 
 const lead = {
   created_at: "2026-10-20T09:27:00+02:00",
@@ -118,4 +118,30 @@ test("the header carries host, because staging and prod share one Supabase proje
   // Appended last on purpose: inserting a column anywhere else shifts every
   // historical row under the wrong header.
   assert.equal(HEADER[HEADER.length - 1], "host")
+})
+
+test("a pre-B2C-457 lead, written before the confirm step existed, is skipped", () => {
+  const old = {
+    created_at: "2026-10-12T00:45:13Z",
+    request_type: "uniqa_insurance_lead",
+    phone: "48884252484",
+    metadata: {
+      source: "pd_home_popup",
+      user_id: "b8245490-132a-4d86-a865-528ebb1d827b",
+      flag_key: "pd.uniqa-insurance-offer",
+      page_url: "/pl",
+    },
+  }
+  assert.equal(hasConfirmedPayload(old), false)
+  assert.deepEqual(rowsFromWebhook({ type: "INSERT", table: "user_requests", record: old }), [])
+})
+
+test("a confirmed lead passes", () => {
+  assert.equal(hasConfirmedPayload(lead), true)
+  assert.equal(rowsFromWebhook({ type: "INSERT", table: "user_requests", record: lead }).length, 1)
+})
+
+test("an empty postal code does not count as confirmed", () => {
+  const blank = { ...lead, metadata: { ...lead.metadata, postal_code: "" } }
+  assert.equal(hasConfirmedPayload(blank), false)
 })

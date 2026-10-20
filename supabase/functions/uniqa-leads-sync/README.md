@@ -13,7 +13,24 @@ within a second of the lead, with no scheduled job.
 | Call | What it does |
 |---|---|
 | `POST /uniqa-leads-sync` with a webhook body | Appends the one new lead. |
-| `POST /uniqa-leads-sync?mode=rebuild` | Clears the tab, writes the header, writes every lead from the start. |
+| `POST /uniqa-leads-sync?mode=rebuild` | Clears the tab, writes the header, writes every **confirmed** lead from the start. |
+
+## Only confirmed leads reach the sheet
+
+The one-step popup that shipped before B2C-457 wrote a lead on the first click,
+so the patient never saw which data left. Those rows carry no `postal_code`,
+and the export skips them. The sheet is what goes to UNIQA, and a patient who
+never saw the handover screen never agreed to it.
+
+`postal_code` is the marker: the confirm step keeps its accept button disabled
+until the profile carries both address fields, so every confirmed lead has one
+and no older lead does.
+
+The filter runs twice — once in the PostgREST query, once in JavaScript — so a
+change to PostgREST filter syntax cannot silently start exporting unconfirmed
+leads.
+
+As of 2026-10-20 that excludes 148 historical rows. They stay in Postgres.
 
 Use `rebuild` for the first fill and to repair the sheet after any failed
 append. The function is safe to rebuild at any time: Postgres holds the record,

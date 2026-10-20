@@ -11,7 +11,7 @@
 // Auth: every request must carry `x-uniqa-webhook-secret`. The rows hold a
 // phone number, a postal code and a city, so this function is never public.
 
-import { rowsFromWebhook, toSheetRow, HEADER, UNIQA_REQUEST_TYPE, UserRequestRow, WebhookPayload } from "./leadRow.ts"
+import { hasConfirmedPayload, rowsFromWebhook, toSheetRow, HEADER, UNIQA_REQUEST_TYPE, UserRequestRow, WebhookPayload } from "./leadRow.ts"
 import { appendRows, clearTab, SheetTarget } from "./sheets.ts"
 
 const env = (name: string): string => Deno.env.get(name) ?? ""
@@ -63,6 +63,8 @@ const fetchAllLeads = async (): Promise<UserRequestRow[]> => {
     const url = `${base}/rest/v1/user_requests` +
       `?select=created_at,request_type,phone,metadata` +
       `&request_type=eq.${UNIQA_REQUEST_TYPE}` +
+      // Skip the pre-B2C-457 one-step leads. See hasConfirmedPayload().
+      `&metadata->>postal_code=not.is.null` +
       `&order=created_at.asc` +
       `&offset=${offset}&limit=${pageSize}`
     const res = await fetch(url, {
@@ -96,7 +98,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   try {
     if (mode === "rebuild") {
-      const leads = await fetchAllLeads()
+      // Filtered twice on purpose: once in the query, once here. A PostgREST
+      // syntax change must not silently start exporting unconfirmed leads.
+      const leads = (await fetchAllLeads()).filter(hasConfirmedPayload)
       await clearTab(target)
       await appendRows(target, [HEADER as string[], ...leads.map(toSheetRow)])
       return json(200, { ok: true, mode: "rebuild", rows: leads.length })
@@ -105,8 +109,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const payload = await req.json().catch(() => null) as WebhookPayload | null
     const rows = rowsFromWebhook(payload)
     if (rows.length === 0) {
-      // Not a UNIQA lead. 200 on purpose: the webhook fires for every
-      // `user_requests` insert, and a non-2xx would queue endless retries.
+      // Not a UNIQA lead, or a lead with no confirmed payload. 200 on purpose:
+      // the webhook fires for every `user_requests` insert, and a non-2xx
+      // would queue endless retries.
       return json(200, { ok: true, skipped: true })
     }
     await appendRows(target, rows)
