@@ -21,6 +21,9 @@ export const HEADER: readonly string[] = [
   "flag_key",
   "host",
   "email",
+  "first_name",
+  "last_name",
+  "gender",
 ]
 
 export interface UserRequestRow {
@@ -78,6 +81,10 @@ export const toSheetRow = (row: UserRequestRow): string[] => {
     // `email` is a top-level NOT NULL column on user_requests, not a
     // metadata key. Appended last so historical rows keep their alignment.
     cell(row.email),
+    // Appended last so every existing row keeps its alignment.
+    cell(meta.first_name),
+    cell(meta.last_name),
+    cell(meta.gender),
   ]
 }
 

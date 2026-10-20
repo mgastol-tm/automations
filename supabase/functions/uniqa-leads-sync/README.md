@@ -43,7 +43,7 @@ city.
 ## Sheet columns
 
 ```
-created_at | phone | age | postal_code | city | user_id | page_url | source | flag_key | host | email
+created_at | phone | age | postal_code | city | user_id | page_url | source | flag_key | host | email | first_name | last_name | gender
 ```
 
 Every cell is written as text with `valueInputOption=RAW`. As a number,

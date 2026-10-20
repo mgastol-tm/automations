@@ -20,6 +20,9 @@ const lead = {
     source: "pd_home_popup",
     flag_key: "pd.uniqa-insurance-offer",
     host: "panel.telemedi.com",
+    first_name: "Anna",
+    last_name: "Kowalska",
+    gender: "female",
   },
 }
 
@@ -38,6 +41,9 @@ test("the row matches the header, column for column", () => {
     "pd.uniqa-insurance-offer",
     "panel.telemedi.com",
     "patient@telemedi.com",
+    "Anna",
+    "Kowalska",
+    "female",
   ])
 })
 
@@ -50,7 +56,8 @@ test("every cell is a string, so Sheets cannot reinterpret a phone or a postal c
 test("a missing metadata block still produces a full-width row", () => {
   const row = toSheetRow({ created_at: "x", request_type: "uniqa_insurance_lead", phone: "1" })
   assert.equal(row.length, HEADER.length)
-  assert.deepEqual(row.slice(2), ["", "", "", "", "", "", "", "", ""])
+  // every column after created_at and phone comes from metadata
+  assert.deepEqual(row.slice(2), new Array(HEADER.length - 2).fill(""))
 })
 
 test("a null age renders empty, not the text 'null'", () => {
@@ -115,14 +122,14 @@ test("the header carries email, appended last", () => {
   // Reinstated 2026-10-20: UNIQA keeps the email, and it is a NOT NULL column
   // on user_requests, so no lead can exist without one.
   assert.equal(HEADER.includes("email"), true)
-  assert.equal(HEADER[HEADER.length - 1], "email")
+  assert.equal(HEADER.indexOf("email"), HEADER.length - 4)
 })
 
 test("the header carries host, because staging and prod share one Supabase project", () => {
   assert.equal(HEADER.includes("host"), true)
   // Appended last on purpose: inserting a column anywhere else shifts every
   // historical row under the wrong header.
-  assert.equal(HEADER[HEADER.length - 2], "host")
+  assert.equal(HEADER.indexOf("host"), HEADER.length - 5)
 })
 
 test("a pre-B2C-457 lead, written before the confirm step existed, is skipped", () => {
@@ -149,4 +156,21 @@ test("a confirmed lead passes", () => {
 test("an empty postal code does not count as confirmed", () => {
   const blank = { ...lead, metadata: { ...lead.metadata, postal_code: "" } }
   assert.equal(hasConfirmedPayload(blank), false)
+})
+
+test("the header carries the name and the sex, appended last", () => {
+  assert.deepEqual(HEADER.slice(-3), ["first_name", "last_name", "gender"])
+})
+
+test("a female lead renders 'female', not an empty cell", () => {
+  // Gender.female is 0 in the dashboard enum, so the payload sends the word,
+  // never the number. A 0 here would round-trip into a blank cell.
+  const row = toSheetRow(lead)
+  assert.equal(row[HEADER.indexOf("gender")], "female")
+})
+
+test("a lead with no PESEL renders an empty sex, and still exports", () => {
+  const noPesel = { ...lead, metadata: { ...lead.metadata, gender: null } }
+  assert.equal(hasConfirmedPayload(noPesel), true)
+  assert.equal(toSheetRow(noPesel)[HEADER.indexOf("gender")], "")
 })
